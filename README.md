@@ -8,3 +8,5 @@ set your viewport into "shaded mode" so view the texture.
 
 Most of all, you need to read the code below to see what it actually does and
 how.
+
+<img src="./brain-0001-0100.gif">
