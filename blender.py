@@ -10,8 +10,6 @@ how.
 Author: Marijn van Vliet <w.m.vanvliet@gmail.com>
 """
 import bpy
-import numpy as np
-import matplotlib as mpl
 import sys
 
 # We need to tell Blender where to look for the MNE-Python package.
@@ -19,8 +17,14 @@ import sys
 # version of your Blender installation. Then, install mne-base and pooch into
 # it: `conda install -c conda-forge mne-base pooch`
 sys.path.append('/l/vanvlm1/conda-envs/mne-blender/lib/python3.8/site-packages')
+
+import numpy as np
+import matplotlib as mpl
 import mne
 from mne.viz._3d import _process_clim, _linearize_map
+
+low_res = True
+surf = 'pial'
 
 root = mne.datasets.sample.data_path()
 subjects_dir = f'{root}/subjects'
@@ -28,16 +32,29 @@ bem_dir = f'{subjects_dir}/sample/bem'
 surf_dir = f'{subjects_dir}/sample/surf'
 meg_dir = f'{root}/MEG/sample'
 
-# Read in the mesh
-surf = 'pial'
-coords_lh, faces_lh = mne.read_surface(f'{surf_dir}/lh.{surf}')
-coords_rh, faces_rh = mne.read_surface(f'{surf_dir}/rh.{surf}')
-coords = np.vstack((coords_lh, coords_rh)).tolist()
-faces = np.vstack((faces_lh, faces_rh + len(coords_lh))).tolist()
+if low_res:
+    # Construct low resolution mesh
+    src = mne.setup_source_space('sample', spacing='ico4',
+                                 surface=surf, add_dist=False)
+    coords_lh = src[0]['rr'][src[0]['inuse'] == 1]
+    faces_lh = src[0]['use_tris']
+    coords_rh = src[1]['rr'][src[1]['inuse'] == 1]
+    faces_rh = src[1]['use_tris']
+else:
+    # Read full resolution mesh
+    coords_lh, faces_lh = mne.read_surface(f'{surf_dir}/lh.{surf}')
+    coords_rh, faces_rh = mne.read_surface(f'{surf_dir}/rh.{surf}')
+    # Convert from mm to m
+    coords_lh /= 1000
+    coords_rh /= 1000
+    
+    
+coords = np.vstack((coords_lh, coords_rh))
+faces = np.vstack((faces_lh, faces_rh + len(coords_lh)))
 mesh = bpy.data.meshes.new(surf)
-mesh.from_pydata(coords, [], faces)
+mesh.from_pydata(coords.tolist(), [], faces.tolist())
 
-# Add the mesh to the Blender shene
+# Add the mesh to the Blender scene
 collection = bpy.data.collections.new('MNE-Python')
 bpy.context.scene.collection.children.link(collection)
 mesh_object = bpy.data.objects.new(surf, mesh)
@@ -57,11 +74,14 @@ mesh_object.data.materials.append(material)
 values = [True] * len(mesh.polygons)
 mesh.polygons.foreach_set("use_smooth", values)
 
-# Read in the brain activity and convert to high resolution
+# Read in the brain activity
 stc = mne.read_source_estimate(f'{meg_dir}/sample_audvis-meg-eeg', subject='sample')
-morph = mne.compute_source_morph(stc, subject_to='sample',
-                                 subjects_dir=subjects_dir, spacing=None)
-stc = morph.apply(stc)
+
+if not low_res:
+    # Convert to high resolution
+    morph = mne.compute_source_morph(stc, subject_to='sample',
+                                     subjects_dir=subjects_dir, spacing=None)
+    stc = morph.apply(stc)
 
 # Configure the colormap
 mapdata = _process_clim(clim='auto', colormap='auto', transparent=True, data=stc.data)
@@ -73,7 +93,7 @@ def my_handler(scene):
     """Invoked whenever a new frame is triggered."""
     # Determine the curretn time
     n_times = len(stc.times)
-    t = 0.1 * scene.frame_current / scene.render.fps
+    t = 0.01 * scene.frame_current / scene.render.fps
 
     # We are somewhere between two samples in the data. Figure out which
     # samples and how much we should interpolate between them.
